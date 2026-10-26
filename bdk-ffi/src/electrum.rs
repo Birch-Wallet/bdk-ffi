@@ -3,6 +3,7 @@ use crate::error::ElectrumError;
 use crate::types::KeychainKind;
 use crate::types::Update;
 use crate::types::{FullScanRequest, SyncRequest};
+use crate::wallet::Wallet;
 
 use bdk_electrum::electrum_client::HeaderNotification as BdkHeaderNotification;
 use bdk_electrum::electrum_client::ServerFeaturesRes as BdkServerFeaturesRes;
@@ -163,6 +164,25 @@ impl ElectrumClient {
     pub fn fetch_tx(&self, txid: Arc<Txid>) -> Result<Arc<Transaction>, ElectrumError> {
         let tx = self.0.fetch_tx(txid.0).map_err(ElectrumError::from)?;
         Ok(Arc::new(Transaction::from(tx.as_ref().clone())))
+    }
+
+    /// Inserts the wallet's transactions and anchors into the client's in-memory caches so that
+    /// the client will not re-fetch them.
+    ///
+    /// Typically used with a new client before a `full_scan` or `sync`, so that the scan only
+    /// fetches the transactions and merkle proofs the wallet does not already have. A cached anchor
+    /// is only used while its block hash matches the server's header at that height.
+    pub fn populate_cache(&self, wallet: &Wallet) {
+        let wallet = wallet.get_wallet();
+        let graph = wallet.tx_graph();
+        self.0
+            .populate_tx_cache(graph.full_txs().map(|tx_node| tx_node.tx));
+        self.0.populate_anchor_cache(
+            graph
+                .all_anchors()
+                .iter()
+                .map(|(txid, anchors)| (*txid, anchors.iter().copied())),
+        );
     }
 
     /// Returns the capabilities of the server.
